@@ -1,6 +1,26 @@
-diff -ru a/src/ap/hw_features.c b/src/ap/hw_features.c
---- a/src/ap/hw_features.c	2022-01-16 15:51:29.000000000 -0500
-+++ b/src/ap/hw_features.c	2022-07-06 22:57:53.007315518 -0500
+--- a/hostapd/config_file.c
++++ b/hostapd/config_file.c
+@@ -3459,6 +3459,8 @@
+ 		conf->noscan = atoi(pos);
+ 	} else if (os_strcmp(buf, "ht_coex") == 0) {
+ 		conf->no_ht_coex = !atoi(pos);
++	} else if (os_strcmp(buf, "intel_lar") == 0) {
++		conf->intel_lar = atoi(pos);
+ 	} else if (os_strcmp(buf, "ieee80211n") == 0) {
+ 		conf->ieee80211n = atoi(pos);
+ 	} else if (os_strcmp(buf, "ht_capab") == 0) {
+--- a/src/ap/ap_config.h
++++ b/src/ap/ap_config.h
+@@ -1050,6 +1050,7 @@
+ 	u16 ht_capab;
+ 	int noscan;
+ 	int no_ht_coex;
++	int intel_lar;
+ 	int ieee80211n;
+ 	int secondary_channel;
+ 	int no_pri_sec_switch;
+--- a/src/ap/hw_features.c	
++++ b/src/ap/hw_features.c
 @@ -26,6 +26,17 @@
  #include "beacon.h"
  #include "hw_features.h"
@@ -24,9 +44,9 @@ diff -ru a/src/ap/hw_features.c b/src/ap/hw_features.c
  	if (hostapd_drv_none(hapd))
  		return -1;
 +
-+
-+	if (!iface->conf->noscan) { 
-+        // scan
++	//if (!iface->conf->noscan) {
++	if (iface->conf->intel_lar && !iface->conf->noscan) { 
++       // scan
 +	struct wpa_driver_scan_params params;
 +	int ret1;
 +
