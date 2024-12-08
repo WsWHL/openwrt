@@ -1,0 +1,49 @@
+name: Build OpenWrt
+
+on:
+  push:
+    branches:
+      - v23.05.5  # 在主分支推送时触发
+  pull_request:
+    branches:
+      - v23.05.5  # 在主分支的 PR 提交时触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # 第一步：检查出代码
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 第二步：设置环境（如安装依赖）
+      - name: Setup Build Environment
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential asciidoc binutils bzip2 gawk gcc-multilib \
+              git libncurses5-dev libz-dev patch unzip zlib1g-dev lib32gcc-s1 lib32stdc++6 \
+              python2.7 python3 python3-distutils rsync file wget curl
+
+      # 第三步：下载和更新 OpenWrt 源码
+      - name: Update Feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      # 第四步：配置 OpenWrt
+      - name: Configure OpenWrt
+        run: |
+          cp .github/configs/.config .config || true
+          make defconfig
+
+      # 第五步：开始编译
+      - name: Build OpenWrt
+        run: |
+          make -j$(nproc) || make -j1 V=s
+
+      # 第六步：保存构建输出
+      - name: Upload Firmware
+        uses: actions/upload-artifact@v3
+        with:
+          name: OpenWrt-Firmware
+          path: bin/targets
