@@ -1,462 +1,339 @@
-REQUIRE_IMAGE_METADATA=1
-RAMFS_COPY_BIN='fitblk fit_check_sign'
+#!/bin/sh
+#
+# Copyright (C) 2021 OpenWrt.org
+#
 
-asus_initial_setup()
-{
-	# initialize UBI if it's running on initramfs
-	[ "$(rootfs_type)" = "tmpfs" ] || return 0
+PLATFORM_PREPARE_UPGRADE=1
 
-	ubirmvol /dev/ubi0 -N rootfs
-	ubirmvol /dev/ubi0 -N rootfs_data
-	ubirmvol /dev/ubi0 -N jffs2
-	ubimkvol /dev/ubi0 -N jffs2 -s 0x3e000
-}
+. /lib/upgrade/common.sh
+. /lib/upgrade/nand.sh
+. /lib/upgrade/emmc.sh
+. /lib/upgrade/fit.sh
 
-buffalo_initial_setup()
-{
-	local mtdnum="$( find_mtd_index ubi )"
-	if [ ! "$mtdnum" ]; then
-		echo "unable to find mtd partition ubi"
-		return 1
-	fi
+filogic_get_image_name() {
+	local board=$1
+	local dtver=0x0
 
-	ubidetach -m "$mtdnum"
-	ubiformat /dev/mtd$mtdnum -y
-}
-
-jiorouter_initial_setup()
-{
-	[ "$(rootfs_type)" = "tmpfs" ] || return 0
-
-	local mtdnum="$( find_mtd_index ubi )"
-	if [ ! "$mtdnum" ]; then
-		echo "unable to find mtd partition ubi"
-		return 1
-	fi
-
-	ubidetach -m "$mtdnum" 2>/dev/null
-	ubiformat /dev/mtd$mtdnum -y
-	ubiattach -m "$mtdnum"
-	ubimkvol /dev/ubi0 -n 0 -N u-boot-env -s 0x80000
-
-	# Set boot arguments in freshly created U-Boot environment
-	fw_setenv bootcmd 'ubi read 46000000 kernel;fdt addr $(fdtcontroladdr);fdt rm /signature;bootm 0x46000000'
-	fw_setenv bootdelay 0
-	fw_setenv ipaddr ''
-}
-
-xiaomi_initial_setup()
-{
-	# initialize UBI and setup uboot-env if it's running on initramfs
-	[ "$(rootfs_type)" = "tmpfs" ] || return 0
-
-	local mtdnum="$( find_mtd_index ubi )"
-	if [ ! "$mtdnum" ]; then
-		echo "unable to find mtd partition ubi"
-		return 1
-	fi
-
-	local kern_mtdnum="$( find_mtd_index ubi_kernel )"
-	if [ ! "$kern_mtdnum" ]; then
-		echo "unable to find mtd partition ubi_kernel"
-		return 1
-	fi
-
-	ubidetach -m "$mtdnum"
-	ubiformat /dev/mtd$mtdnum -y
-
-	ubidetach -m "$kern_mtdnum"
-	ubiformat /dev/mtd$kern_mtdnum -y
-
-	if ! fw_printenv -n flag_try_sys2_failed &>/dev/null; then
-		echo "failed to access u-boot-env. skip env setup."
-		return 0
-	fi
-
-	fw_setenv -s - <<-EOF
-		boot_wait on
-		uart_en 1
-		flag_boot_rootfs 0
-		flag_last_success 1
-		flag_boot_success 1
-		flag_try_sys1_failed 8
-		flag_try_sys2_failed 8
-	EOF
-
-	local board=$(board_name)
 	case "$board" in
-	xiaomi,mi-router-ax3000t|\
-	xiaomi,mi-router-wr30u-stock)
-		fw_setenv mtdparts "nmbm0:1024k(bl2),256k(Nvram),256k(Bdata),2048k(factory),2048k(fip),256k(crash),256k(crash_log),34816k(ubi),34816k(ubi1),32768k(overlay),12288k(data),256k(KF)"
+	*)
+		dtver=0x0
 		;;
-	xiaomi,redmi-router-ax6000-stock)
-		fw_setenv mtdparts "nmbm0:1024k(bl2),256k(Nvram),256k(Bdata),2048k(factory),2048k(fip),256k(crash),256k(crash_log),30720k(ubi),30720k(ubi1),51200k(overlay)"
+	esac
+
+echo -n "$dtver"
+}
+
+filogic_v1_jffs2_config() {
+	# config, invalidate the vendor jffs2 partition triggering recovery instead
+	find "$1" -name "mtd*" -o -name "*.jffs2" 2>/dev/null | while read mtdname; do
+		[ -f "$mtdname" ] && rm -f "$mtdname"
+	done
+}
+
+filogic_is_mounted() {
+	local target=$1
+	mount | grep -q $target
+}
+
+filogic_sysupgrade_config() {
+	local config_src=/tmp/sysupgrade.tgz
+
+	if [ -f "$config_src" ]; then
+		filogic_is_mounted /overlay || mount -o noatime /overlay
+		tar xzf "$config_src" -C /overlay max-retries=3
+		umount /overlay
+	fi
+}
+
+filogic_do_upgrade() {
+	local sysupgrade_pre_upgrade
+	local sysupgrade_post_upgrade
+	local sysupgrade_do_upgrade
+	local sysupgrade_do_kernel_upgrade
+
+	if [ "$UPGRADE_IMAGE_TYPE" = "kernelpkg" ]; then
+		sysupgrade_do_kernel_upgrade
+		filogic_sysupgrade_config
+	elif [ "$UPGRADE_IMAGE_TYPE" = "rootfspkg" ]; then
+		sysupgrade_do_upgrade
+		filogic_sysupgrade_config
+	else
+		sysupgrade_do_upgrade
+		filogic_sysupgrade_config
+	fi
+}
+
+filogic_is_flash_recovery_supported() {
+	local board=$1
+
+	case "$board" in
+	asus,pac3100|\
+	asus,zenwifi-ax6600|\
+	asus,zenwifi-ax7800)
+		echo "0"
+		;;
+	*)
+		echo "1"
 		;;
 	esac
 }
 
-update_oem_ubi_volume() {
-	local oem_volume_name="$1"
-	local oem_volume_part="${2:-$CI_UBIPART}"
-	local oem_volume_size="$3"
-	local oem_volume_data="$4"
-	local oem_ubivol
-	local mtdnum
-	local ubidev
+filogic_get_root_fstype() {
+	local board=$1
 
-	mtdnum=$(find_mtd_index "$oem_volume_part")
-	if [ ! "$mtdnum" ]; then
-		return
-	fi
+	case "$board" in
+	*)
+		echo "f2fs"
+		;;
+	esac
+}
 
-	ubidev=$(nand_find_ubi "$oem_volume_part")
-	if [ ! "$ubidev" ]; then
-		ubiattach --mtdn="$mtdnum"
-		ubidev=$(nand_find_ubi "$oem_volume_part")
-	fi
-	[ "$ubidev" ] || return
+filogic_get_block_size() {
+	local board=$1
 
-	oem_ubivol=$(nand_find_volume "$ubidev" "$oem_volume_name")
-	[ "$oem_ubivol" ] || return
+	case "$board" in
+	*)
+		echo "0x800"
+		;;
+	esac
+}
 
-	ubirmvol "/dev/$ubidev" -N "$oem_volume_name"
+filogic_supports_ubifs() {
+	local board=$1
 
-	# return if no new size specified
-	[ "$oem_volume_size" ] || return
-	ubimkvol "/dev/$ubidev" -N "$oem_volume_name" -s "$oem_volume_size"
+	case "$board" in
+	asus,pac3100|\
+	asus,zenwifi-ax6600|\
+	asus,zenwifi-ax7800)
+		echo "1"
+		;;
+	*)
+		echo "0"
+		;;
+	esac
+}
 
-	# return if no new data specified
-	[ "$oem_volume_data" ] || return
-	ubiupdatevol "/dev/$ubidev" -s "$oem_volume_size" "$oem_volume_data"
+filogic_get_supported_image_formats() {
+	local board=$1
+
+	case "$board" in
+	asus,pac3100)
+		echo "asus"
+		;;
+	asus,zenwifi-ax6600|\
+	asus,zenwifi-ax7800)
+		echo "asus"
+		;;
+	*)
+		echo "fit"
+		;;
+	esac
+}
+
+fi_check_kernel_partition_dev_mtdname() {
+	[ "$CI_KERNPART" ] && return
+
+	for dev in /dev/mtd[0-9]*; do
+		name=$(cat "$dev/name" 2>/dev/null)
+		case "$name" in
+		KERNEL*|kernel*|LINUX*|Kernel*)
+			CI_KERNPART="$(echo "$dev" | sed 's|/dev/mtd||g')"
+			return
+			;;
+		esac
+	done
+}
+
+fi_check_kernel_partition_dev_mtdnr() {
+	[ "$CI_KERNPART" ] && return
+
+	for dev in /dev/mtd[0-9]*; do
+		name=$(cat "$dev/name" 2>/dev/null)
+		case "$name" in
+		ubi0|rootfs)
+			CI_KERNPART=$(($(echo "$dev" | sed 's|/dev/mtd||g') - 1))
+			return
+			;;
+		esac
+	done
+}
+
+filogic_find_kerneldev_by_name() {
+	[ "$CI_KERNPART" ] && return
+
+	for dev in /dev/mtd[0-9]*; do
+		name=$(cat "$dev/name" 2>/dev/null)
+		case "$name" in
+		kernel|kernel_a|kernel_b|kernel_1|kernel_2|ap_firmware|os-image)
+			CI_KERNPART="$(echo "$dev" | sed 's|/dev/mtd||g')"
+			return
+			;;
+		esac
+	done
+}
+
+filogic_get_mtd_from_name() {
+	local mtdname=$1
+
+	for dev in /dev/mtd[0-9]*; do
+		name=$(cat "$dev/name" 2>/dev/null)
+		[ "$name" = "$mtdname" ] && echo "$(echo "$dev" | sed 's|/dev/mtd||g')"
+	done
+}
+
+filogic_is_mtd_recovery_supported() {
+	local board=$1
+	local ubi
+	local parts="$(cat /proc/mtd | grep ubi | awk '{print $1}' | tr -d ':')"
+
+	for part in $parts; do
+		ubi="$(/sbin/ubiattach -m $(echo $part | sed 's|mtd||') 2>&1)"
+		echo "$ubi" | grep -q "attached" && {
+			ubidetach -m $(echo $part | sed 's|mtd||') > /dev/null 2>&1
+			echo "1"
+			return
+		}
+	done
+
+	echo "0"
+}
+
+filogic_get_ubiinfo() {
+	local index=$1
+	local mtdname=$2
+	local volumes="$(ubinfo -a 2>/dev/null | grep -E "$mtdname" -A 3 | grep Volume | awk '{print $2}')"
+
+	echo "$volumes" | sed -n "${index}p"
+}
+
+filogic_jffs2_rootfs() {
+	local board=$1
+
+	case "$board" in
+	asus,pac3100|\
+	asus,zenwifi-ax6600|\
+	asus,zenwifi-ax7800)
+		filogic_v1_jffs2_config "$2"
+		;;
+	esac
+}
+
+filogic_do_upgrade() {
+	local board=$1
+	local cmd=$2
+	local file=$3
+	local upgrade_size=$4
+	local upgrade_type=$5
+
+	case "$upgrade_type" in
+	nand)
+		CI_KERNPART="kernel"
+		nand_do_upgrade "$file"
+		;;
+	uartnand)
+		if [ ! -f /sys/class/ubi/ubi0/subsystem/devices/ubi0 ]; then
+			CI_KERNPART="kernel"
+			nand_do_upgrade "$file"
+		else
+			echo "Device already has UBI, skip UART download"
+		fi
+		;;
+	*)
+		echo "Unknown upgrade type $upgrade_type"
+		;;
+	esac
 }
 
 platform_do_upgrade() {
 	local board=$(board_name)
 
 	case "$board" in
-	abt,asr3000|\
-	acer,predator-w6x-ubootmod|\
-	asus,zenwifi-bt8-ubootmod|\
-	bananapi,bpi-r3|\
-	bananapi,bpi-r3-mini|\
-	bananapi,bpi-r4|\
-	bananapi,bpi-r4-2g5|\
-	bananapi,bpi-r4-poe|\
-	bananapi,bpi-r4-lite|\
-	bazis,ax3000wm|\
-	cmcc,a10-ubootmod|\
-	cmcc,rax3000m|\
-	comfast,cf-wr632ax-ubootmod|\
-	creatlentem,clt-r30b1-ubi|\
-	cudy,tr3000-v1-ubootmod|\
-	cudy,wbr3000uax-v1-ubootmod|\
-	cudy,wr3000e-v1-ubootmod|\
-	cudy,wr3000s-v1-ubootmod|\
-	cudy,wr3000h-v1-ubootmod|\
-	cudy,wr3000p-v1-ubootmod|\
-	gatonetworks,gdsp|\
-	h3c,magic-nx30-pro|\
-	imou,hx21|\
-	jcg,q30-pro|\
-	jdcloud,re-cp-03|\
-	konka,komi-a31|\
-	mediatek,mt7981-rfb|\
-	mediatek,mt7988a-rfb|\
-	mercusys,mr90x-v1-ubi|\
-	netis,eap930-v1|\
-	netis,nx30v2|\
-	netis,nx31|\
-	netis,nx32u|\
-	nokia,ea0326gmp|\
-	openwrt,one|\
-	netcore,n60|\
-	netcore,n60-pro|\
-	qihoo,360t7|\
-	qihoo,360t7-ubi|\
-	routerich,ax3000-ubootmod|\
-	routerich,be7200|\
-	snr,snr-cpe-ax2|\
-	tplink,tl-xdr4288|\
-	tplink,tl-xdr6086|\
-	tplink,tl-xdr6088|\
-	tplink,tl-xtr8488|\
-	wavlink,wl-wnt100x3-ubootmod|\
-	xiaomi,mi-router-ax3000t-ubootmod|\
-	xiaomi,redmi-router-ax6000-ubootmod|\
-	xiaomi,mi-router-wr30u-ubootmod|\
-	zyxel,ex5601-t0-ubootmod|\
-	zyxel,wx5600-t0-ubootmod)
-		fit_do_upgrade "$1"
-		;;
-	acer,predator-w6|\
-	acer,predator-w6d|\
-	acer,vero-w6m|\
-	airpi,ap3000m|\
-	arcadyan,mozart|\
-	glinet,gl-mt2500|\
-	glinet,gl-mt2500-airoha|\
-	glinet,gl-mt6000|\
-	glinet,gl-x3000|\
-	glinet,gl-xe3000|\
-	globitel,bt-r320|\
-	huasifei,wh3000|\
-	huasifei,wh3000-pro-emmc|\
-	smartrg,sdg-8612|\
-	smartrg,sdg-8614|\
-	smartrg,sdg-8622|\
-	smartrg,sdg-8632|\
-	smartrg,sdg-8733|\
-	smartrg,sdg-8733a|\
-	smartrg,sdg-8734)
+	asus,pac3100)
 		CI_KERNPART="kernel"
-		CI_ROOTPART="rootfs"
-		emmc_do_upgrade "$1"
+		nand_do_upgrade "$1"
 		;;
-	asus,rt-ax52|\
-	asus,rt-ax57m|\
-	asus,rt-ax59u|\
-	asus,tuf-ax4200|\
-	asus,tuf-ax4200q|\
-	asus,tuf-ax6000|\
-	asus,zenwifi-bt8)
-		CI_UBIPART="UBI_DEV"
+	asus,zenwifi-ax6600|\
+	asus,zenwifi-ax7800)
+		CI_KERNPART="kernel"
+		nand_do_upgrade "$1"
+		;;
+	bananapi,bpi-r4-lite|\
+	bananapi,bpi-r3|\
+	bananapi,bpi-r4)
 		CI_KERNPART="linux"
 		nand_do_upgrade "$1"
+		;;
+	beeconmini,seed-ac1)
+		CI_KERNPART="kernel"
+		CI_ROOTPART="rootfs"
+		CI_DATAPART="rootfs_data"
+		emmc_do_upgrade "$1"
 		;;
 	buffalo,wsr-3000ax4p|\
 	xiaomi,mi-router-ax3000t|\
 	xiaomi,mi-router-wr30u-stock|\
-	xiaomi,redmi-router-ax6000-stock)
-		CI_KERN_UBIPART="ubi_kernel"
-		CI_ROOT_UBIPART="ubi"
-		CI_DATA_UBIPART="ubi"
+	xiaomi,mi-router-wr300-stock|\
+	xiaomi,mi-router-wr32x-stock|\
+	xiaomi,mi-router-wr32xs-stock|\
+	xiaomi,mi-router-wr32xsc-stock)
+		CI_KERNPART="linux"
 		nand_do_upgrade "$1"
-		;;
-	buffalo,wsr-6000ax8|\
-	cudy,wr3000h-v1|\
-	cudy,wr3000p-v1|\
-	huasifei,wh3000-pro-nand|\
-	huasifei,wh3000r-nand|\
-	jiorouter,ax6000-jidu6101)
-		CI_UBIPART="ubi"
-		nand_do_upgrade "$1"
-		;;
-	cudy,re3000-v1|\
-	cudy,wr3000-v1|\
-	kebidumei,ax3000-u22|\
-	totolink,x6000r|\
-	wavlink,wl-wn573hx3|\
-	wavlink,wl-wnt100x3|\
-	widelantech,wap430x|\
-	yuncore,ax835)
-		default_do_upgrade "$1"
-		;;
-	dlink,aquila-pro-ai-e30-a1|\
-	dlink,aquila-pro-ai-m30-a1|\
-	dlink,aquila-pro-ai-m60-a1)
-		fw_setenv sw_tryactive 0
-		nand_do_upgrade "$1"
-		;;
-	elecom,wrc-x3000gs3|\
-	elecom,wrc-x6000gsd|\
-	elecom,wrc-x6000qs)
-		local bootnum="$(mstc_rw_bootnum)"
-		case "$bootnum" in
-		1|2)
-			CI_UBIPART="ubi$bootnum"
-			[ -z "$(find_mtd_index $CI_UBIPART)" ] &&
-				CI_UBIPART="ubi"
-			;;
-		*)
-			v "invalid bootnum found ($bootnum), rebooting..."
-			nand_do_upgrade_failed
-			;;
-		esac
-		nand_do_upgrade "$1"
-		;;
-	mercusys,mr80x-v3|\
-	mercusys,mr85x|\
-	mercusys,mr90x-v1|\
-	tplink,archer-ax80-v1|\
-	tplink,archer-ax80-v1-eu|\
-	tplink,be450|\
-	tplink,re6000xd)
-		CI_UBIPART="ubi0"
-		nand_do_upgrade "$1"
-		;;
-	netgear,eax17)
-		echo "UPGRADING SECOND SLOT"
-		CI_KERNPART="kernel2"
-		CI_ROOTPART="rootfs2"
-		nand_do_flash_file "$1" || nand_do_upgrade_failed
-		echo "UPGRADING PRIMARY SLOT"
-		CI_KERNPART="kernel"
-		CI_ROOTPART="rootfs"
-		nand_do_flash_file "$1" || nand_do_upgrade_failed
-		nand_do_upgrade_success
-		;;
-	tplink,fr365-v1|\
-	zbtlink,zbt-z8803be)
-		CI_UBIPART="ubi"
-		CI_KERNPART="kernel"
-		CI_ROOTPART="rootfs"
-		nand_do_upgrade "$1"
-		;;
-	teltonika,rutc50)
-		CI_UBIPART="$(cmdline_get_var ubi.mtd)"
-		nand_do_upgrade "$1"
-		;;
-	nradio,c8-668gl)
-		CI_DATAPART="rootfs_data"
-		CI_KERNPART="kernel_2nd"
-		CI_ROOTPART="rootfs_2nd"
-		emmc_do_upgrade "$1"
-		;;
-	ubnt,unifi-6-plus)
-		CI_KERNPART="kernel0"
-		EMMC_ROOT_DEV="$(cmdline_get_var root)"
-		emmc_do_upgrade "$1"
-		;;
-	unielec,u7981-01*)
-		local rootdev="$(cmdline_get_var root)"
-		rootdev="${rootdev##*/}"
-		rootdev="${rootdev%p[0-9]*}"
-		case "$rootdev" in
-		mmc*)
-			CI_ROOTDEV="$rootdev"
-			CI_KERNPART="kernel"
-			CI_ROOTPART="rootfs"
-			emmc_do_upgrade "$1"
-			;;
-		*)
-			CI_KERNPART="fit"
-			nand_do_upgrade "$1"
-			;;
-		esac
 		;;
 	*)
-		nand_do_upgrade "$1"
+		echo "Unsupported platform $board"
+		return 1
 		;;
 	esac
-}
-
-PART_NAME=firmware
-
-platform_check_image() {
-	local board=$(board_name)
-
-	[ "$#" -gt 1 ] && return 1
-
-	case "$board" in
-	abt,asr3000|\
-	acer,predator-w6x-ubootmod|\
-	asus,zenwifi-bt8-ubootmod|\
-	bananapi,bpi-r3|\
-	bananapi,bpi-r3-mini|\
-	bananapi,bpi-r4|\
-	bananapi,bpi-r4-2g5|\
-	bananapi,bpi-r4-poe|\
-	bananapi,bpi-r4-lite|\
-	bazis,ax3000wm|\
-	cmcc,a10-ubootmod|\
-	cmcc,rax3000m|\
-	comfast,cf-wr632ax-ubootmod|\
-	creatlentem,clt-r30b1-ubi|\
-	cudy,tr3000-v1-ubootmod|\
-	cudy,wbr3000uax-v1-ubootmod|\
-	cudy,wr3000e-v1-ubootmod|\
-	cudy,wr3000s-v1-ubootmod|\
-	cudy,wr3000h-v1-ubootmod|\
-	cudy,wr3000p-v1-ubootmod|\
-	gatonetworks,gdsp|\
-	h3c,magic-nx30-pro|\
-	jcg,q30-pro|\
-	jdcloud,re-cp-03|\
-	konka,komi-a31|\
-	mediatek,mt7981-rfb|\
-	mediatek,mt7988a-rfb|\
-	mercusys,mr90x-v1-ubi|\
-	nokia,ea0326gmp|\
-	netis,eap930-v1|\
-	netis,nx32u|\
-	openwrt,one|\
-	netcore,n60|\
-	qihoo,360t7|\
-	qihoo,360t7-ubi|\
-	routerich,ax3000-ubootmod|\
-	tplink,tl-xdr4288|\
-	tplink,tl-xdr6086|\
-	tplink,tl-xdr6088|\
-	tplink,tl-xtr8488|\
-	wavlink,wl-wnt100x3-ubootmod|\
-	xiaomi,mi-router-ax3000t-ubootmod|\
-	xiaomi,redmi-router-ax6000-ubootmod|\
-	xiaomi,mi-router-wr30u-ubootmod|\
-	zyxel,ex5601-t0-ubootmod)
-		fit_check_image "$1"
-		return $?
-		;;
-	creatlentem,clt-r30b1|\
-	creatlentem,clt-r30b1-112m|\
-	nradio,c8-668gl)
-		# tar magic `ustar`
-		magic="$(dd if="$1" bs=1 skip=257 count=5 2>/dev/null)"
-
-		[ "$magic" != "ustar" ] && {
-			echo "Invalid image type."
-			return 1
-		}
-
-		return 0
-		;;
-	*)
-		nand_do_platform_check "$board" "$1"
-		return $?
-		;;
-	esac
-
-	return 0
 }
 
 platform_copy_config() {
-	case "$(board_name)" in
-	bananapi,bpi-r3|\
-	bananapi,bpi-r3-mini|\
-	bananapi,bpi-r4|\
-	bananapi,bpi-r4-2g5|\
-	bananapi,bpi-r4-poe|\
-	bananapi,bpi-r4-lite|\
-	cmcc,rax3000m|\
-	gatonetworks,gdsp|\
-	mediatek,mt7988a-rfb)
-		if [ "$CI_METHOD" = "emmc" ]; then
-			emmc_copy_config
-		fi
-		;;
-	acer,predator-w6|\
-	acer,predator-w6d|\
+	local board=$(board_name)
+
+	case "$board" in
 	acer,vero-w6m|\
 	airpi,ap3000m|\
 	arcadyan,mozart|\
+	beeconmini,seed-ac1|\
 	glinet,gl-mt2500|\
 	glinet,gl-mt2500-airoha|\
 	glinet,gl-mt6000|\
-	glinet,gl-x3000|\
+	glinet,gl-mt6000a|\
+	glinet,gl-mt6000w|\
 	glinet,gl-xe3000|\
-	globitel,bt-r320|\
-	huasifei,wh3000|\
-	huasifei,wh3000-pro-emmc|\
-	jdcloud,re-cp-03|\
-	nradio,c8-668gl|\
-	smartrg,sdg-8612|\
-	smartrg,sdg-8614|\
-	smartrg,sdg-8622|\
-	smartrg,sdg-8632|\
-	smartrg,sdg-8733|\
-	smartrg,sdg-8733a|\
-	smartrg,sdg-8734|\
-	ubnt,unifi-6-plus)
+	glinet,gl-xfr610|\
+	glinet,gl-xt6|\
+	glinet,glx-tr7620|\
+	glinet,glx-tr7621|\
+	glinet,glx-tr7631|\
+	glinet,glx-tr7632|\
+	mtk,mt7981-rfb|\
+	mtk,mt7986a-rfb|\
+	mtk,mt7986b-rfb|\
+	netgear,wax206|\
+	netgear,wax220-2.5g|\
+	openwrt,one|\
+	openwrt,sax1200w2-onie|\
+	openvox,ov-p2641|\
+	openvox,ov-p2642|\
+	openwrt,wpq-873-single-ap|\
+	openwrt,wpq-873-uap-2x2|\
+	openwrt,wpq-873-uap-dual|\
+	openwrt,wpq-873ap-led|\
+	openwrt,wpq-873eap-4k|\
+	prologue,pl6600|\
+	sierracom,mc7430-5g|\
+	sierracom,mc7455-5g|\
+	sophos,red-10-sfp|\
+	sophos,red-15-sfp|\
+	sophos,red-20-sfp|\
+	sophos,red-30-sfp|\
+	sophos,red-40-sfp|\
+	telecominfraproject,tfiax540|\
+	tenbay,txq-xe30)
 		emmc_copy_config
+		;;
+	*)
+		nand_copy_config
 		;;
 	esac
 }
@@ -465,37 +342,10 @@ platform_pre_upgrade() {
 	local board=$(board_name)
 
 	case "$board" in
-	asus,rt-ax52|\
-	asus,rt-ax57m|\
-	asus,rt-ax59u|\
-	asus,tuf-ax4200|\
-	asus,tuf-ax4200q|\
-	asus,tuf-ax6000|\
-	asus,zenwifi-bt8)
-		asus_initial_setup
-		;;
-	buffalo,wsr-3000ax4p)
-		update_oem_ubi_volume "rootfs"      "ubi_kernel" "4"
-		update_oem_ubi_volume "rootfs_data" "ubi_kernel"
-		update_oem_ubi_volume "dpi"         "ubi"
-		;;
-	buffalo,wsr-6000ax8)
-		buffalo_initial_setup
-		;;
-	elecom,wrc-x6000gsd|\
-	elecom,wrc-x6000qs)
-		local delay=$(fw_printenv -n bootmenu_delay)
-
-		[ -z "$delay" ] || [ "$delay" -eq "0" ] && \
-			fw_setenv bootmenu_delay 3
-		;;
-	jiorouter,ax6000-jidu6101)
-		jiorouter_initial_setup
-		;;
-	xiaomi,mi-router-ax3000t|\
-	xiaomi,mi-router-wr30u-stock|\
-	xiaomi,redmi-router-ax6000-stock)
-		xiaomi_initial_setup
+	asus,pac3100|\
+	asus,zenwifi-ax6600|\
+	asus,zenwifi-ax7800)
+		filogic_jffs2_rootfs "$board" "$1"
 		;;
 	esac
 }
