@@ -27,6 +27,34 @@ bananapi,bpi-r64)
 		;;
 	beeconmini,seed-ac1)
 		ucidef_set_interfaces_lan_wan "sfp1 lan1 lan2 lan3 lan4 lan5" eth1
+    ;;
+	asus,rt-ax52|\
+	asus,rt-ax59u|\
+	asus,zenwifi-bt8|\
+	asus,zenwifi-bt8-ubootmod|\
+	buffalo,wsr-3000ax4p|\
+	cetron,ct3003|\
+	cmcc,a10-stock|\
+	cmcc,a10-ubootmod|\
+	confiabits,mt7981|\
+	creatlentem,clt-r30b1|\
+	creatlentem,clt-r30b1-112m|\
+	creatlentem,clt-r30b1-ubi|\
+	cudy,wr3000-v1|\
+	globitel,bt-r320|\
+	huasifei,wh3000r-nand|\
+	jcg,q30-pro|\
+	keenetic,kn-3711|\
+	keenetic,kn-3811|\
+	livinet,li320|\
+	netis,nx32u|\
+	qihoo,360t7|\
+	qihoo,360t7-ubi|\
+	routerich,ax3000|\
+	routerich,ax3000-ubootmod|\
+	routerich,be7200|\
+	tenbay,wr3000k)
+		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3" wan
 		;;
 	dlink,aquila-pro-ai-e30-a1)
 		ucidef_set_interface_lan "lan"
@@ -63,7 +91,23 @@ telecominfraproject,tfiax540)
 	openwrt,wpq-873-uap-2x2|\
 	openwrt,wpq-873-uap-dual|\
 	openwrt,wpq-873ap-led|\
-	openwrt,wpq-873eap-4k)
+	openwrt,wpq-873eap-4k)\
+	bazis,ax3000wm|\
+	cudy,m3000-v1|\
+	cudy,m3000-v1-ubootmod|\
+	cudy,m3000-v2-yt8821|\
+	cudy,m3000-v2-yt8821-ubootmod|\
+	cudy,tr3000-256mb-v1|\
+	cudy,tr3000-v1|\
+	cudy,tr3000-v1-ubootmod|\
+	glinet,gl-mt2500|\
+	glinet,gl-mt2500-airoha|\
+	glinet,gl-mt3000|\
+	glinet,gl-mt3600be|\
+	glinet,gl-x3000|\
+	glinet,gl-xe3000|\
+	openembed,som7981|\
+	openwrt,one)
 		ucidef_set_interfaces_lan_wan eth1 eth0
 		;;
 	sierracom,mc7430-5g|\

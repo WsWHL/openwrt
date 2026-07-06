@@ -106,6 +106,86 @@ filogic_supports_ubifs() {
 	asus,zenwifi-ax6600|\
 	asus,zenwifi-ax7800)
 		echo "1"
+    ;;
+	abt,asr3000|\
+	acer,predator-w6x-ubootmod|\
+	asus,zenwifi-bt8-ubootmod|\
+	bananapi,bpi-r3|\
+	bananapi,bpi-r3-mini|\
+	bananapi,bpi-r4|\
+	bananapi,bpi-r4-2g5|\
+	bananapi,bpi-r4-poe|\
+	bananapi,bpi-r4-lite|\
+	bazis,ax3000wm|\
+	cmcc,a10-ubootmod|\
+	cmcc,rax3000m|\
+	comfast,cf-wr632ax-ubootmod|\
+	creatlentem,clt-r30b1-ubi|\
+	cudy,m3000-v1-ubootmod|\
+	cudy,m3000-v2-yt8821-ubootmod|\
+	cudy,tr3000-v1-ubootmod|\
+	cudy,wbr3000uax-v1-ubootmod|\
+	cudy,wr3000e-v1-ubootmod|\
+	cudy,wr3000s-v1-ubootmod|\
+	cudy,wr3000h-v1-ubootmod|\
+	cudy,wr3000p-v1-ubootmod|\
+	gatonetworks,gdsp|\
+	globitel,bt-r320|\
+	h3c,magic-nx30-pro|\
+	imou,hx21|\
+	jcg,q30-pro|\
+	jdcloud,re-cp-03|\
+	konka,komi-a31|\
+	mediatek,mt7981-rfb|\
+	mediatek,mt7988a-rfb|\
+	mercusys,mr90x-v1-ubi|\
+	netis,eap930-v1|\
+	netis,nx30v2|\
+	netis,nx31|\
+	netis,nx32u|\
+	nokia,ea0326gmp|\
+	openwrt,one|\
+	netcore,n60|\
+	netcore,n60-pro|\
+	qihoo,360t7|\
+	qihoo,360t7-ubi|\
+	routerich,ax3000-ubootmod|\
+	routerich,be7200|\
+	snr,snr-cpe-ax2|\
+	tplink,tl-xdr4288|\
+	tplink,tl-xdr6086|\
+	tplink,tl-xdr6088|\
+	tplink,tl-xtr8488|\
+	wavlink,wl-wnt100x3-ubootmod|\
+	xiaomi,mi-router-ax3000t-ubootmod|\
+	xiaomi,redmi-router-ax6000-ubootmod|\
+	xiaomi,mi-router-wr30u-ubootmod|\
+	zyxel,ex5601-t0-ubootmod|\
+	zyxel,wx5600-t0-ubootmod)
+		fit_do_upgrade "$1"
+		;;
+	acer,predator-w6|\
+	acer,predator-w6d|\
+	acer,vero-w6m|\
+	airpi,ap3000m|\
+	arcadyan,mozart|\
+	glinet,gl-mt2500|\
+	glinet,gl-mt2500-airoha|\
+	glinet,gl-mt6000|\
+	glinet,gl-x3000|\
+	glinet,gl-xe3000|\
+	huasifei,wh3000|\
+	huasifei,wh3000-pro-emmc|\
+	smartrg,sdg-8612|\
+	smartrg,sdg-8614|\
+	smartrg,sdg-8622|\
+	smartrg,sdg-8632|\
+	smartrg,sdg-8733|\
+	smartrg,sdg-8733a|\
+	smartrg,sdg-8734)
+		CI_KERNPART="kernel"
+		CI_ROOTPART="rootfs"
+		emmc_do_upgrade "$1"
 		;;
 	*)
 		echo "0"
@@ -262,6 +342,48 @@ platform_do_upgrade() {
 	bananapi,bpi-r4)
 		CI_KERNPART="linux"
 		nand_do_upgrade "$1"
+    ;;
+	bazis,ax3000wm|\
+	cmcc,a10-ubootmod|\
+	cmcc,rax3000m|\
+	comfast,cf-wr632ax-ubootmod|\
+	creatlentem,clt-r30b1-ubi|\
+	cudy,m3000-v1-ubootmod|\
+	cudy,m3000-v2-yt8821-ubootmod|\
+	cudy,tr3000-v1-ubootmod|\
+	cudy,wbr3000uax-v1-ubootmod|\
+	cudy,wr3000e-v1-ubootmod|\
+	cudy,wr3000s-v1-ubootmod|\
+	cudy,wr3000h-v1-ubootmod|\
+	cudy,wr3000p-v1-ubootmod|\
+	gatonetworks,gdsp|\
+	globitel,bt-r320|\
+	h3c,magic-nx30-pro|\
+	jcg,q30-pro|\
+	jdcloud,re-cp-03|\
+	konka,komi-a31|\
+	mediatek,mt7981-rfb|\
+	mediatek,mt7988a-rfb|\
+	mercusys,mr90x-v1-ubi|\
+	nokia,ea0326gmp|\
+	netis,eap930-v1|\
+	netis,nx32u|\
+	openwrt,one|\
+	netcore,n60|\
+	qihoo,360t7|\
+	qihoo,360t7-ubi|\
+	routerich,ax3000-ubootmod|\
+	tplink,tl-xdr4288|\
+	tplink,tl-xdr6086|\
+	tplink,tl-xdr6088|\
+	tplink,tl-xtr8488|\
+	wavlink,wl-wnt100x3-ubootmod|\
+	xiaomi,mi-router-ax3000t-ubootmod|\
+	xiaomi,redmi-router-ax6000-ubootmod|\
+	xiaomi,mi-router-wr30u-ubootmod|\
+	zyxel,ex5601-t0-ubootmod)
+		fit_check_image "$1"
+		return $?
 		;;
 	beeconmini,seed-ac1)
 		CI_KERNPART="kernel"
